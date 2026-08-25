@@ -1,0 +1,29 @@
+{
+    "name": "ecommerce-invoices-and-documents-api",
+    "version": "0.1.0",
+    "description": "HTTP adapter over the invoicing domain: documents frozen at issue, numbered per series, corrected rather than edited, delivered as recorded facts, and kept for as long as retention says.",
+    "category": "adapter",
+    "provider": "Liberu\\Ecommerce\\InvoicesAndDocuments\\Api\\InvoicesAndDocumentsApiServiceProvider",
+    "requires": {
+        "packages": {
+            "liberusoftware/ecommerce-invoices-and-documents": "^0.1"
+        }
+    },
+    "features": [
+        "The merchant is derived from the credential and is never accepted in a path, a query string or a body",
+        "There is no PUT, PATCH or DELETE on a document anywhere: an issued document is corrected by a credit note and discarded by a void that records",
+        "A refusal is a fact in the response body, carrying the domain's own reason as the error code, never a bare status",
+        "The refusal table is a match over the domain's enum, so a reason added to the domain fails static analysis here rather than arriving as a 500",
+        "Three delivery refusals are published as not resubmittable because the attempt row is written before the transport is asked, so the reference is already spent",
+        "A document belonging to another merchant, one belonging to another buyer, one whose buyer was erased and one nobody minted are all the same 404 with the same body",
+        "No idempotency key: every write already has a natural key the database enforces, and a key a client holds is a key a client can change",
+        "A rendition with no renderer bound answers 200 with rendered false and the reason named, because the document is still entirely readable",
+        "Money leaves as minor units, an ISO 4217 code, an exponent and a decimal string, and no endpoint accepts or returns a float",
+        "No database key ever leaves: a document is named by its reference, because the host published its primary key as an invoice number",
+        "Erasure and export are person-wide across every tenant, so they are gated on invoicing:platform-privacy and not on a merchant's ability",
+        "An erasure answers 200 with complete on its face, naming every document retention refused, its number and the date the window ends",
+        "Two abilities are split by whose documents they reach, and the self-only one cannot name a subject even if an endpoint asked",
+        "No listing of numbering series and no pagination: the domain publishes neither query, and both are recorded as gaps rather than improvised here",
+        "OpenAPI 3.1 kept in parity with the router in both directions, including the ability each operation enforces"
+    ]
+}
