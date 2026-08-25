@@ -1,0 +1,2005 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Ecommerce Invoices and Documents API",
+    "version": "0.1.0",
+    "summary": "The document a sale produces, and the number it is filed under.",
+    "description": "The HTTP surface over `liberusoftware/ecommerce-invoices-and-documents`.\n\n**Issue freezes.** A document copies everything it will ever display at the moment it is drafted, and reads it from nowhere else again. The application this module replaces printed the product's *current* name on every past invoice and lost its lines when a product was deleted.\n\n**An issued document is immutable, so there is no update operation and no delete operation on this API.** A document is corrected by issuing a credit note that references it, and discarded by voiding it, which records rather than erases. No PUT, no PATCH and no DELETE appears anywhere below.\n\n**A refusal is a fact in the body.** Every refusal the domain can return carries the domain's own reason as the error `code`, with `resubmittable` saying whether asking again could work. Nothing on this surface is transient, so there is no 429, no 423 and no retry header anywhere.\n\n**There is no idempotency key, anywhere.** Every write already has a natural key the database enforces — a document on its sale, a credit note on its refund, a delivery on its own reference. A key a client holds is a key a client can change, so one layered on top would be strictly weaker than the constraint already there.\n\n**The merchant is never accepted.** It is derived from the credential and appears in no path, no query string and no body. The two privacy operations are the exception in the other direction: they are person-wide across every merchant, because a subject-access request is about a person, and they publish the merchant on every row so a caller can act on what they say.",
+    "license": {
+      "name": "MIT",
+      "identifier": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/invoicing",
+      "description": "The default mount. A host may change the prefix in `config/invoices-and-documents-api.php`."
+    }
+  ],
+  "tags": [
+    {
+      "name": "Documents",
+      "description": "Drafting, issuing, correcting, voiding, delivering and reading a merchant's documents."
+    },
+    {
+      "name": "My documents",
+      "description": "The documents issued to the credential holder."
+    },
+    {
+      "name": "Series",
+      "description": "Numbering series, and the reconciliation that proves one has no holes."
+    },
+    {
+      "name": "Privacy",
+      "description": "Export and erasure, person-wide across every merchant."
+    }
+  ],
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/documents": {
+      "get": {
+        "operationId": "listDocuments",
+        "summary": "List this merchant's documents",
+        "description": "Newest first, optionally narrowed by kind, by state or by buyer reference. The merchant is the credential's and appears in no parameter.\n\nThere is no pagination, because the domain publishes no paged listing. `docs/adoption.md` names the query that would bring one.",
+        "tags": [
+          "Documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The merchant's documents.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ListedDocument"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentKind"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/DocumentState"
+            }
+          },
+          {
+            "name": "buyer_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 191
+            },
+            "description": "An opaque buyer reference. This module never resolves it against anybody's table."
+          }
+        ]
+      },
+      "post": {
+        "operationId": "draftDocument",
+        "summary": "Draft a document from a sale",
+        "description": "The one moment the sale is read. Everything the document will ever display is copied now — seller, buyer, every line description, quantity, unit price, tax rate and tax amount, and the currency — and after this the module reads the sale never again.\n\nThe natural key is the cause: one document per merchant, kind and `source_ref`, arbitrated by a unique index. A repeated draft of the same sale answers `already_recorded` with the reference already minted, so there is no idempotency key here and no need of one.\n\nA credit note is not drafted here: it names the document it corrects.",
+        "tags": [
+          "Documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Drafted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Already drafted; the reference is the one already minted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "422": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refused"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftDocumentRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{document}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/document"
+        }
+      ],
+      "get": {
+        "operationId": "showDocument",
+        "summary": "Read a document",
+        "description": "Everything the document says, from the document's own frozen rows: the parties as they were at issue, each line as it was described, the totals summed from those lines, and the per-rate tax block a VAT invoice has to carry.\n\nA document belonging to another merchant answers exactly as one nobody ever minted does.",
+        "tags": [
+          "Documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/documents/{document}/rendition": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/document"
+        }
+      ],
+      "get": {
+        "operationId": "showDocumentRendition",
+        "summary": "Read the file of a document",
+        "description": "Rendering is a seam and PDFs are not this module's job. With no renderer bound there is no file, and this answers **200** with `rendered` false and the reason named — the document is still entirely readable, which is the whole blast radius of the missing binding. A renderer that declined is a different answer from no renderer at all.",
+        "tags": [
+          "Documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The document, and the file of it if a renderer produced one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Rendition"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/documents/{document}/issuances": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/document"
+        }
+      ],
+      "post": {
+        "operationId": "issueDocument",
+        "summary": "Issue a document",
+        "description": "Where the number is spent. It is spent inside the transaction that writes the document, under a row lock on the series, so a rollback returns it rather than leaving a hole.\n\nA fiscal kind has to name a series. A proforma may not take a number from a fiscal one, and a proforma with no series is issued unnumbered.",
+        "tags": [
+          "Documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Issued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Already issued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "422": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refused"
+          }
+        },
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IssuanceRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{document}/voidings": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/document"
+        }
+      ],
+      "post": {
+        "operationId": "voidDocument",
+        "summary": "Void a document",
+        "description": "Void records; it does not erase. The number stays spent, which is what keeps a gapless series gapless, and the reason and the previous state go in an event row. This is the only way to discard a document, because there is no delete path anywhere in this module.",
+        "tags": [
+          "Documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Voided.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Already void.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "422": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refused"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VoidingRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{document}/credit-notes": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/document"
+        }
+      ],
+      "post": {
+        "operationId": "draftCreditNote",
+        "summary": "Correct a document with a credit note",
+        "description": "A document is corrected by another document, never by an edit — which is why this surface publishes no PUT, no PATCH and no DELETE.\n\nThe credit note copies the corrected document's identities rather than re-reading the sale, so it carries the buyer the invoice carried. Its lines are stated by the caller, because a credit note is rarely the whole invoice, and every figure arrives computed: this module adds recorded integers and never divides, multiplies or rounds.\n\nCredit notes may not come to more than the document they correct, counting every one already issued against it.",
+        "tags": [
+          "Documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Drafted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Already drafted for that refund reference.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "422": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refused"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreditNoteRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{document}/deliveries": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/document"
+        }
+      ],
+      "post": {
+        "operationId": "recordDelivery",
+        "summary": "Record a delivery attempt",
+        "description": "The attempt is a row before it is a transmission, keyed on the delivery reference the caller states, so a retried send cannot transmit twice. Delivered is what a transport answered rather than what dispatching implied.\n\nBecause the row is written before the transport is asked, a refusal here has already spent the delivery reference: `no_transport_bound`, `transport_failed` and `transport_suppressed` are published as **not** resubmittable, and sending again needs a new reference.",
+        "tags": [
+          "Documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Delivered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Already attempted under that delivery reference.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "502": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "422": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refused"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeliveryRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/my-documents": {
+      "get": {
+        "operationId": "listMyDocuments",
+        "summary": "List the documents issued to me",
+        "description": "The credential holder's own. The buyer is the credential's subject reference and is never read from a request: an endpoint under this ability that accepted one would be an endpoint a stolen token could point at a stranger.",
+        "tags": [
+          "My documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The caller's own documents.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ListedDocument"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/my-documents/{document}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/document"
+        }
+      ],
+      "get": {
+        "operationId": "showMyDocument",
+        "summary": "Read a document issued to me",
+        "description": "A document belonging to another buyer, a document belonging to another merchant, a document whose buyer has been erased, and a reference nobody ever minted are one answer with one body. Anything else would publish which of them it was.",
+        "tags": [
+          "My documents"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:read"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Document"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/series": {
+      "post": {
+        "operationId": "openSeries",
+        "summary": "Open a numbering series",
+        "description": "A series belongs to the merchant rather than to a storefront: the filing obligation is the merchant's.\n\n`gapless` is a policy of the series and not an invariant of the module, because jurisdictions differ. A gapless series refuses to spend a number on nothing; any other one records the burn rather than leaving a hole nobody can explain.\n\nThis deliberately does not reuse `commerce-core`'s order-number allocator, whose documented guarantee — a gap is fine, a duplicate is not — is the opposite of the one a fiscal series needs.",
+        "tags": [
+          "Series"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Opened.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Already open under that code.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SeriesRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/series/{series}/continuity": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/series"
+        }
+      ],
+      "get": {
+        "operationId": "showSeriesContinuity",
+        "summary": "Reconcile a series",
+        "description": "Every number the series has spent, on a document or on the record of one it could not use. A gapless series with anything in `missing` is the one alarm in the runbook that cannot wait: nothing in the domain can fill a hole in afterwards.",
+        "tags": [
+          "Series"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What the series has spent.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Continuity"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/series/{series}/burned-numbers": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/series"
+        }
+      ],
+      "post": {
+        "operationId": "burnNumber",
+        "summary": "Spend a number on nothing, on the record",
+        "description": "A gapless series refuses, because a hole is exactly what it promises not to have. Any other series records the burn with its reason, so an auditor finds an explanation rather than a gap.",
+        "tags": [
+          "Series"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:operate"
+            ]
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Burned.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Already recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/Outcome"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "422": {
+            "$ref": "#/components/responses/Refused"
+          },
+          "503": {
+            "$ref": "#/components/responses/Refused"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BurnRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/subject-records": {
+      "post": {
+        "operationId": "exportParticipantRecord",
+        "summary": "Export one person's documents",
+        "description": "**Person-wide across every merchant.** A subject-access request is about a person and not about a merchant, so this walks every tenant and names the merchant on each row. That is why the ability is `invoicing:platform-privacy` and not an operator one: do not issue it to a storefront credential.\n\nA POST rather than a GET, the export included: a subject reference in a query string is a subject reference in the access log, the referrer and the proxy cache.\n\nA person this module holds nothing about gets an empty list, not a 404.",
+        "tags": [
+          "Privacy"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:platform-privacy"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every document issued to that person, in every merchant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ParticipantRecord"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubjectRecordRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/erasures": {
+      "post": {
+        "operationId": "forgetParticipant",
+        "summary": "Erase one person, where retention allows it",
+        "description": "Retention outranks erasure, and the conflict is returned rather than settled silently in either direction.\n\nContact details, delivery addresses and free-text notes always go. The buyer's identity on a document still inside its retention window does not, and every refusal names the document, its number and the date the window ends. A document issued under **no** configured retention window is refused too: unknown is not zero, and guessing in either direction is how a host comes to rewrite its own statutory records.\n\nAlways 200, with `complete` on the face of it. **Person-wide across every merchant**, exactly as the export is, so the two agree about what everything means.",
+        "tags": [
+          "Privacy"
+        ],
+        "security": [
+          {
+            "bearer": [
+              "invoicing:platform-privacy"
+            ]
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What was redacted, and what retention would not let go.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "data"
+                  ],
+                  "properties": {
+                    "data": {
+                      "$ref": "#/components/schemas/ForgetReport"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErasureRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A token carrying one of `invoicing:read`, `invoicing:operate` or `invoicing:platform-privacy`. `invoicing:operate` is not a superset of `invoicing:read`: the read ability acts for the credential holder as a buyer, which a service account is not."
+      }
+    },
+    "parameters": {
+      "document": {
+        "name": "document",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "A document reference. Never a database key."
+      },
+      "series": {
+        "name": "series",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "A series code, unique within the merchant."
+      }
+    },
+    "responses": {
+      "Unauthenticated": {
+        "description": "No authenticated actor.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The credential does not carry the ability, is attached to no merchant, or resolves to no person. Never a statement that some record exists.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No such record for this credential. A reference belonging to another merchant answers this, byte for byte, as one nobody ever minted does.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Refused": {
+        "description": "The domain refused, and said why. The error code is the domain's own reason.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Money": {
+        "type": "object",
+        "description": "Minor units, an ISO 4217 alphabetic code and the exponent that relates them. `decimal` is a **string**, built by the domain's integer arithmetic, so a client parsing JSON numbers as doubles still gets an exact answer. There is no float anywhere on this surface.",
+        "required": [
+          "minor",
+          "currency",
+          "exponent",
+          "decimal"
+        ],
+        "properties": {
+          "minor": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "exponent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "decimal": {
+            "type": "string"
+          }
+        }
+      },
+      "DocumentKind": {
+        "type": "string",
+        "enum": [
+          "invoice",
+          "credit_note",
+          "receipt",
+          "proforma"
+        ]
+      },
+      "DocumentState": {
+        "type": "string",
+        "enum": [
+          "draft",
+          "issued",
+          "delivered",
+          "void"
+        ],
+        "description": "`draft` to `issued` to `delivered`, and `void` from any of them. Void records rather than erases; there is no state that removes a document."
+      },
+      "Party": {
+        "type": "object",
+        "description": "A name, an address and a tax registration as they were at issue. `reference` is opaque: this module never resolves it against anybody's table.",
+        "required": [
+          "reference",
+          "name",
+          "address",
+          "tax_id"
+        ],
+        "properties": {
+          "reference": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "tax_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present on the buyer only, and cleared unconditionally by an erasure."
+          }
+        }
+      },
+      "Line": {
+        "type": "object",
+        "description": "One line as the document froze it. Net, tax and gross all arrive computed: the tax module divides and rounds, this module only ever adds.",
+        "required": [
+          "description",
+          "quantity",
+          "quantity_milli",
+          "unit_net",
+          "net",
+          "tax_rate_basis_points",
+          "tax",
+          "gross"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "A copy, not the catalogue's current name. Renaming a product changes nothing that was ever issued."
+          },
+          "quantity": {
+            "type": "string",
+            "description": "A decimal string. No float touches a document."
+          },
+          "quantity_milli": {
+            "type": "integer",
+            "description": "Thousandths, so 2.5 kg is 2500."
+          },
+          "unit_net": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "net": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "tax_rate_basis_points": {
+            "type": "integer"
+          },
+          "tax": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "gross": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "TaxRateTotal": {
+        "type": "object",
+        "required": [
+          "tax_rate_basis_points",
+          "net",
+          "tax",
+          "gross"
+        ],
+        "properties": {
+          "tax_rate_basis_points": {
+            "type": "integer"
+          },
+          "net": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "tax": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "gross": {
+            "$ref": "#/components/schemas/Money"
+          }
+        }
+      },
+      "Summary": {
+        "type": "object",
+        "description": "Summed from the frozen lines every time it is asked for. No column holds a total that could drift away from what the document says.",
+        "required": [
+          "net",
+          "tax",
+          "gross",
+          "by_rate"
+        ],
+        "properties": {
+          "net": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "tax": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "gross": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "by_rate": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaxRateTotal"
+            },
+            "description": "One row per distinct rate: the block a VAT invoice has to carry, and the thing the host's gross-only total could not produce."
+          }
+        }
+      },
+      "Corrects": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "required": [
+          "reference",
+          "number"
+        ],
+        "properties": {
+          "reference": {
+            "type": "string"
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ListedDocument": {
+        "type": "object",
+        "description": "A document in a listing. It carries the buyer's name, because that is what an invoice list is for, and neither their address nor their email, because a listing does not need them.",
+        "required": [
+          "reference",
+          "kind",
+          "state",
+          "number",
+          "issued_at",
+          "buyer_name",
+          "total",
+          "corrects"
+        ],
+        "properties": {
+          "reference": {
+            "type": "string",
+            "description": "How a document is named. No database key ever leaves this surface: the host published the primary key of its invoices table as an invoice number, which is both an enumeration disclosure and not a valid invoice number anywhere that regulates invoicing."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DocumentKind"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DocumentState"
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null until the document is issued, and on a proforma issued under no series."
+          },
+          "issued_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "buyer_name": {
+            "type": "string"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "corrects": {
+            "$ref": "#/components/schemas/Corrects"
+          }
+        }
+      },
+      "Document": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ListedDocument"
+          },
+          {
+            "type": "object",
+            "required": [
+              "seller",
+              "buyer",
+              "lines",
+              "summary",
+              "note"
+            ],
+            "properties": {
+              "seller": {
+                "$ref": "#/components/schemas/Party"
+              },
+              "buyer": {
+                "$ref": "#/components/schemas/Party"
+              },
+              "lines": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Line"
+                }
+              },
+              "summary": {
+                "$ref": "#/components/schemas/Summary"
+              },
+              "note": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "Everything the document says, from the document's own rows and nothing else. There is no merchant identifier on it: the merchant is derived from the credential."
+      },
+      "Rendition": {
+        "type": "object",
+        "required": [
+          "rendered",
+          "unavailable_reason",
+          "rendition",
+          "document"
+        ],
+        "properties": {
+          "rendered": {
+            "type": "boolean"
+          },
+          "unavailable_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "no_renderer_bound",
+              "renderer_declined"
+            ],
+            "description": "`no_renderer_bound` is a deployment that has chosen no renderer; `renderer_declined` is one that has and which produced nothing for this document. They are **not** the same answer."
+          },
+          "rendition": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "media_type",
+              "filename",
+              "contents_base64"
+            ],
+            "properties": {
+              "media_type": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "contents_base64": {
+                "type": "string",
+                "contentEncoding": "base64"
+              }
+            }
+          },
+          "document": {
+            "$ref": "#/components/schemas/Document"
+          }
+        }
+      },
+      "Outcome": {
+        "type": "object",
+        "description": "What every write here answers. `recorded` is 201, `already_recorded` is 200, and a refusal is a status with the domain's own reason as the error code — never a silent no-op and never a bare 4xx.",
+        "required": [
+          "recording",
+          "reference"
+        ],
+        "properties": {
+          "recording": {
+            "type": "string",
+            "enum": [
+              "recorded",
+              "already_recorded"
+            ]
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The document's reference, the series code, the number burned or the delivery reference, depending on what was written."
+          }
+        }
+      },
+      "Continuity": {
+        "type": "object",
+        "required": [
+          "series",
+          "gapless",
+          "continuous",
+          "issued",
+          "burned",
+          "first",
+          "last",
+          "missing"
+        ],
+        "properties": {
+          "series": {
+            "type": "string"
+          },
+          "gapless": {
+            "type": "boolean"
+          },
+          "continuous": {
+            "type": "boolean"
+          },
+          "issued": {
+            "type": "integer"
+          },
+          "burned": {
+            "type": "integer"
+          },
+          "first": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "last": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Numbers between the first and the last that nothing accounts for. On a gapless series this must be empty, and nothing in the domain can fill one in afterwards."
+          }
+        }
+      },
+      "ExportedDocument": {
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "reference",
+          "kind",
+          "state",
+          "number",
+          "issued_at",
+          "buyer_name",
+          "total",
+          "retain_until",
+          "redacted"
+        ],
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "description": "The merchant that issued it. Published here and nowhere else on this surface, because this answer is person-wide across merchants and a privacy answer that will not say whose document it is cannot be acted on."
+          },
+          "reference": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DocumentKind"
+          },
+          "state": {
+            "$ref": "#/components/schemas/DocumentState"
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issued_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "buyer_name": {
+            "type": "string"
+          },
+          "total": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "retain_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Null means the host configured no window, which is unknown and **not** zero."
+          },
+          "redacted": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ParticipantRecord": {
+        "type": "object",
+        "required": [
+          "subject_ref",
+          "documents"
+        ],
+        "properties": {
+          "subject_ref": {
+            "type": "string"
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExportedDocument"
+            }
+          }
+        }
+      },
+      "RetentionRefusal": {
+        "type": "object",
+        "required": [
+          "tenant_id",
+          "reference",
+          "number",
+          "retain_until",
+          "window_is_unknown"
+        ],
+        "properties": {
+          "tenant_id": {
+            "type": "string",
+            "description": "Which merchant's document refused. See `ExportedDocument.tenant_id`."
+          },
+          "reference": {
+            "type": "string"
+          },
+          "number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "retain_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "window_is_unknown": {
+            "type": "boolean",
+            "description": "True when the host configured no retention window at all. Unknown is not zero, so the erasure refused rather than guessing."
+          }
+        }
+      },
+      "ForgetReport": {
+        "type": "object",
+        "required": [
+          "subject_ref",
+          "complete",
+          "redacted_documents",
+          "redacted_contacts",
+          "redacted_deliveries",
+          "refused_documents"
+        ],
+        "properties": {
+          "subject_ref": {
+            "type": "string"
+          },
+          "complete": {
+            "type": "boolean",
+            "description": "False when retention refused at least one document. On the face of the payload, so a caller that ignores it has been told."
+          },
+          "redacted_documents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "redacted_contacts": {
+            "type": "integer"
+          },
+          "redacted_deliveries": {
+            "type": "integer"
+          },
+          "refused_documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetentionRefusal"
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "code",
+              "message",
+              "resubmittable"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "actor_has_no_subject",
+                  "actor_has_no_tenant",
+                  "credit_note_requires_corrected_document",
+                  "documents_are_immutable",
+                  "exceeds_corrected_document",
+                  "illegal_transition",
+                  "insufficient_scope",
+                  "mixed_currencies",
+                  "money_mismatch",
+                  "no_delivery_address",
+                  "no_renderer_bound",
+                  "no_transport_bound",
+                  "not_correctable",
+                  "not_found",
+                  "not_issued",
+                  "proforma_may_not_use_fiscal_series",
+                  "renderer_declined",
+                  "sale_has_no_lines",
+                  "sale_not_found",
+                  "sale_source_unbound",
+                  "series_is_gapless",
+                  "series_not_found",
+                  "series_required",
+                  "stated_total_disagrees_with_lines",
+                  "transport_failed",
+                  "transport_suppressed",
+                  "unauthenticated",
+                  "validation_failed"
+                ],
+                "description": "A domain refusal reaches a caller under the domain's own name. Branch on this and never on the prose."
+              },
+              "message": {
+                "type": "string"
+              },
+              "resubmittable": {
+                "type": "boolean",
+                "description": "True when the identical request could succeed later — a correctable input, or a seam this deployment has not bound. False when the request reached a decision that will not change, or when it has already spent something a repeat cannot spend again."
+              },
+              "fields": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "description": "Present on `validation_failed` only."
+              }
+            }
+          }
+        }
+      },
+      "DraftDocumentRequest": {
+        "type": "object",
+        "required": [
+          "kind",
+          "source_ref"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/DocumentKind"
+          },
+          "source_ref": {
+            "type": "string",
+            "maxLength": 191,
+            "description": "The sale this document is about, as an opaque reference. It is the natural key: repeat it and you get the document you already have."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          }
+        }
+      },
+      "IssuanceRequest": {
+        "type": "object",
+        "properties": {
+          "series": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 64,
+            "description": "Required for a fiscal kind. A proforma may name a non-fiscal series or none at all."
+          }
+        }
+      },
+      "VoidingRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 255
+          }
+        }
+      },
+      "CreditNoteLine": {
+        "type": "object",
+        "description": "Every figure stated, because this module records what was computed and never recomputes a tax.",
+        "required": [
+          "description",
+          "quantity_milli",
+          "currency",
+          "exponent",
+          "unit_net_minor",
+          "net_minor",
+          "tax_rate_basis_points",
+          "tax_minor",
+          "gross_minor"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "quantity_milli": {
+            "type": "integer"
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$"
+          },
+          "exponent": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
+          "unit_net_minor": {
+            "type": "integer"
+          },
+          "net_minor": {
+            "type": "integer"
+          },
+          "tax_rate_basis_points": {
+            "type": "integer"
+          },
+          "tax_minor": {
+            "type": "integer"
+          },
+          "gross_minor": {
+            "type": "integer"
+          }
+        }
+      },
+      "CreditNoteRequest": {
+        "type": "object",
+        "required": [
+          "source_ref",
+          "lines"
+        ],
+        "properties": {
+          "source_ref": {
+            "type": "string",
+            "maxLength": 191,
+            "description": "The refund this credit note is about. The natural key, exactly as a sale is for an invoice."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "lines": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/CreditNoteLine"
+            }
+          }
+        }
+      },
+      "DeliveryRequest": {
+        "type": "object",
+        "required": [
+          "reference",
+          "channel"
+        ],
+        "properties": {
+          "reference": {
+            "type": "string",
+            "maxLength": 191,
+            "description": "The caller's own reference for this attempt, and the natural key that stops a retry transmitting twice. A refused attempt has already spent it."
+          },
+          "channel": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255,
+            "description": "Falls back to the buyer email the document froze."
+          }
+        }
+      },
+      "SeriesRequest": {
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "prefix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 32
+          },
+          "pad": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 20
+          },
+          "fiscal": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Defaults to true. A proforma may not be filed under a fiscal series."
+          },
+          "gapless": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Defaults to true. A gapless series refuses to burn a number; any other one records the burn."
+          },
+          "start_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          }
+        }
+      },
+      "BurnRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 255
+          }
+        }
+      },
+      "SubjectRecordRequest": {
+        "type": "object",
+        "required": [
+          "subject_ref"
+        ],
+        "properties": {
+          "subject_ref": {
+            "type": "string",
+            "maxLength": 191
+          }
+        }
+      },
+      "ErasureRequest": {
+        "type": "object",
+        "required": [
+          "subject_ref"
+        ],
+        "properties": {
+          "subject_ref": {
+            "type": "string",
+            "maxLength": 191
+          }
+        }
+      }
+    }
+  }
+}
