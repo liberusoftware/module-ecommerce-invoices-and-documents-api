@@ -1,84 +1,99 @@
-# Ecommerce: Invoices and Documents API
+# Ecommerce Invoices and Documents — HTTP API
 
-> This optional API presentation package exposes approved HTTP operations for the Invoices and Documents domain module. It presents exactly one independent module, delegates all authoritative behavior to that module's public actions/queries/policies, and contains no other module's API logic.
+[![Tests](https://github.com/liberusoftware/module-ecommerce-invoices-and-documents-api/actions/workflows/tests.yml/badge.svg)](https://github.com/liberusoftware/module-ecommerce-invoices-and-documents-api/actions/workflows/tests.yml)
 
-[Software](https://liberusoftware.com) ·
-[Hosting](https://liberuhosting.com) ·
-[Services](https://liberuservices.com) ·
-[Liberu Group](https://liberugroup.com)
+The HTTP surface over
+[`liberusoftware/ecommerce-invoices-and-documents`](https://github.com/liberusoftware/module-ecommerce-invoices-and-documents):
+the document a sale produces, and the number that document is filed under.
 
-![PHP](https://img.shields.io/badge/PHP-8.5-777BB4?logo=php&logoColor=white) ![Laravel](https://img.shields.io/badge/Laravel-13-FF2D20?logo=laravel&logoColor=white)
-[![Latest release](https://img.shields.io/github/v/release/liberusoftware/module-ecommerce-invoices-and-documents-api?sort=semver)](https://github.com/liberusoftware/module-ecommerce-invoices-and-documents-api/releases/latest) [![Tests](https://github.com/liberusoftware/module-ecommerce-invoices-and-documents-api/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/liberusoftware/module-ecommerce-invoices-and-documents-api/actions/workflows/tests.yml)
+It presents the domain. It reimplements none of it, holds no business rule, and reads
+none of the domain's Eloquent models — everything goes through the actions, queries and
+value objects that package publishes.
 
-## Features
+## The four things worth knowing before you call it
 
-- Fully compatible with **Laravel 13**, **PHP 8.5**, and **Pest 5**.
-- Built following the domain-driven design guidelines of the Liberu architecture.
-- Reusable, presenting a clean public contract and boundaries.
-- Adheres to the strict database, security, and authorization standards of Liberu.
+**There is no update operation and no delete operation.** An issued document is
+immutable: it is corrected by issuing a credit note that references it, and discarded by
+voiding it, which records rather than erases. No `PUT`, no `PATCH` and no `DELETE`
+appears anywhere on this API, and the suite asserts that over the route table *and* over
+the OpenAPI document.
 
-## Requirements
+**A refusal is a fact in the body.** Every refusal the domain can return carries the
+domain's own reason as the error `code`, with `resubmittable` saying whether asking again
+could work. The refusal table is a `match` over the domain's enum, so a reason added to
+the domain fails static analysis here rather than arriving as a 500.
 
-- **PHP 8.5**
-- **Composer 2**
-- A supported database (e.g. MySQL, PostgreSQL, SQLite)
+**The merchant is never accepted.** It comes from the credential, always, and appears in
+no path, no query string and no body. The two privacy operations are the exception in the
+other direction: they are person-wide across every merchant, because a subject-access
+request is about a person, and they publish the merchant on every row so a caller can act
+on what they say. Their ability is `invoicing:platform-privacy` and it is not a
+merchant's.
 
-## Quick start
+**There is no idempotency key.** Every write already has a natural key the database
+enforces: a document on its sale, a credit note on its refund, a delivery on its own
+reference. A key a client holds is a key a client can change. Send your own reference and
+retry freely — a repeat answers `already_recorded` with the reference already minted.
 
-To install this package via Composer, run:
+## The endpoints
 
-```bash
-composer require liberusoftware/module-ecommerce-invoices-and-documents-api
+Mounted at `api/invoicing` by default.
+
+| | Ability | |
+| --- | --- | --- |
+| `GET /documents` | `invoicing:operate` | This merchant's documents, newest first |
+| `POST /documents` | `invoicing:operate` | Draft one from a sale — the moment the sale is read |
+| `GET /documents/{document}` | `invoicing:operate` | Everything the document says, from its own frozen rows |
+| `GET /documents/{document}/rendition` | `invoicing:operate` | The file of it, or the reason there is none |
+| `POST /documents/{document}/issuances` | `invoicing:operate` | Issue it, spending the number |
+| `POST /documents/{document}/voidings` | `invoicing:operate` | Void it, keeping the number |
+| `POST /documents/{document}/credit-notes` | `invoicing:operate` | Correct it with another document |
+| `POST /documents/{document}/deliveries` | `invoicing:operate` | Record an attempt, and transmit if a transport is bound |
+| `GET /my-documents` | `invoicing:read` | The documents issued to the credential holder |
+| `GET /my-documents/{document}` | `invoicing:read` | One of them |
+| `POST /series` | `invoicing:operate` | Open a numbering series |
+| `GET /series/{series}/continuity` | `invoicing:operate` | Reconcile what it has spent |
+| `POST /series/{series}/burned-numbers` | `invoicing:operate` | Spend a number on nothing, on the record |
+| `POST /subject-records` | `invoicing:platform-privacy` | Export one person's documents, across every merchant |
+| `POST /erasures` | `invoicing:platform-privacy` | Erase them, where retention allows it |
+
+The OpenAPI 3.1 document is at `resources/openapi/openapi.json`, and the suite asserts
+parity with the router in **both** directions — including that every operation documents
+the ability the controller actually enforces, and that the document's error-code enum is
+exactly the set of codes this surface can produce.
+
+## Failures
+
+One body shape, everywhere:
+
+```json
+{"error": {"code": "series_is_gapless", "message": "…", "resubmittable": false}}
 ```
+
+`code` is the domain's own name for the decision. Branch on it, never on the prose.
+`resubmittable` is true only when the *identical* request could succeed later — a
+correctable input, or a seam this deployment has not bound. Three delivery refusals are
+false despite being 502 or 503, because the domain writes the attempt row before it asks
+the transport: the delivery reference is already spent and sending again needs a new one.
+
+Nothing on this surface is transient. There is no 429, no 423 and no retry header.
+
+## What it does not publish
+
+- **No listing of numbering series**, because the domain publishes no query that
+  enumerates them and a filter invented here would be this package deciding what a series
+  is.
+- **No pagination**, because the domain publishes no paged listing. Narrow `GET
+  /documents` with `kind`, `state` or `buyer_ref`.
+- **No merchant-scoped erasure**, because the domain's erasure is person-wide.
+
+All three are recorded in [`docs/adoption.md`](docs/adoption.md) as gaps in the domain
+package rather than improvised here.
 
 ## Documentation
 
-- [Liberu Main Documentation](https://github.com/liberusoftware/documentation)
-- [Architecture & Standards Index](https://github.com/liberusoftware/documentation/tree/main/architecture)
-
-## Related Liberu Projects
-
-| Project | Repository | Purpose |
-| --- | --- | --- |
-| **Boilerplate** | [liberusoftware/boilerplate-laravel](https://github.com/liberusoftware/boilerplate-laravel) | Shared Laravel application foundation and reference composition |
-| **CMS** | [liberu-cms/cms-laravel](https://github.com/liberu-cms/cms-laravel) | Structured content, publishing, media, multisite, and headless delivery |
-| **CRM** | [liberu-crm/crm-laravel](https://github.com/liberu-crm/crm-laravel) | Customer data, sales, marketing, service, and customer success |
-| **Billing** | [liberu-billing/billing-laravel](https://github.com/liberu-billing/billing-laravel) | Products, subscriptions, invoicing, payments, and provisioning |
-| **Accounting** | [liberu-accounting/accounting-laravel](https://github.com/liberu-accounting/accounting-laravel) | Ledgers, banking, tax, expenses, close, and financial reporting |
-| **Ecommerce** | [liberu-ecommerce/ecommerce-laravel](https://github.com/liberu-ecommerce/ecommerce-laravel) | Catalog, checkout, orders, fulfillment, returns, B2B, and omnichannel commerce |
-| **Control Panel** | [liberu-control-panel/control-panel-laravel](https://github.com/liberu-control-panel/control-panel-laravel) | Hosting, infrastructure, DNS, mail, databases, backups, and security operations |
-| **Automation** | [liberu-automation/automation-laravel](https://github.com/liberu-automation/automation-laravel) | Governed workflows, provider-neutral AI, approvals, and connectors |
-
-## Security
-
-Please do not report security vulnerabilities through public GitHub issues.
-Follow our [Security Policy](https://github.com/liberusoftware/documentation/blob/main/architecture/SECURITY.md) for private reporting and supported versions.
-
-## License
-
-This project is open-source software. You may use, modify, and distribute it
-under the terms described in [LICENSE.md](LICENSE.md).
-
-The linked license text is authoritative; this summary is not legal advice.
-
-## Feedback and contributing
-
-Feedback and contributions are welcome. You can help by reporting reproducible
-bugs, proposing focused enhancements, improving documentation or translations,
-and submitting tested code changes.
-
-Before contributing, please read [CONTRIBUTING.md](https://github.com/liberusoftware/documentation/blob/main/standards/CONTRIBUTING.md) and our
-[Code of Conduct](https://github.com/liberusoftware/documentation/blob/main/architecture/CODE_OF_CONDUCT.md). Search existing issues first, then use
-the appropriate issue template. Pull requests should explain the problem and
-approach, remain focused, include or update tests, pass the required workflows,
-and document user-visible or breaking changes.
-
-## Contributors
-
-Thank you to everyone who helps improve Liberu.
-
-<a href="https://github.com/liberusoftware/module-ecommerce-invoices-and-documents-api/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=liberusoftware/module-ecommerce-invoices-and-documents-api" alt="Contributors to liberusoftware/module-ecommerce-invoices-and-documents-api">
-</a>
-
-[View the full contributors graph](https://github.com/liberusoftware/module-ecommerce-invoices-and-documents-api/graphs/contributors).
+| | |
+|---|---|
+| [`docs/adoption.md`](docs/adoption.md) | Installing it, the three seams, which ability goes on which credential, and what it replaces in a host |
+| [`docs/domain.md`](docs/domain.md) | Every decision this surface took, and why |
+| [`docs/runbook.md`](docs/runbook.md) | What breaks, what it looks like, what to do |
