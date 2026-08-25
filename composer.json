@@ -1,0 +1,58 @@
+{
+    "name": "liberusoftware/ecommerce-invoices-and-documents-api",
+    "description": "HTTP adapter over the invoicing domain: documents frozen at issue, numbered per series, corrected by credit notes, delivered as recorded facts, and kept for as long as retention says — with no update path and no delete path.",
+    "type": "liberu-module",
+    "license": "MIT",
+    "version": "0.1.0",
+    "keywords": [
+        "laravel",
+        "ecommerce",
+        "invoicing",
+        "documents",
+        "api",
+        "liberu"
+    ],
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/liberusoftware/module-ecommerce-invoices-and-documents"
+        }
+    ],
+    "require": {
+        "php": "^8.5",
+        "illuminate/config": "^13.0",
+        "illuminate/contracts": "^13.0",
+        "illuminate/http": "^13.0",
+        "illuminate/routing": "^13.0",
+        "illuminate/support": "^13.0",
+        "illuminate/validation": "^13.0",
+        "liberusoftware/ecommerce-invoices-and-documents": "^0.1"
+    },
+    "require-dev": {
+        "liberusoftware/package-testbench": "^1.7",
+        "pestphp/pest": "^5.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Liberu\\Ecommerce\\InvoicesAndDocuments\\Api\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Liberu\\Ecommerce\\InvoicesAndDocuments\\Api\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "liberu": {
+            "name": "ecommerce-invoices-and-documents-api"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        },
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
